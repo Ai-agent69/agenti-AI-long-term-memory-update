@@ -1,186 +1,154 @@
-class ImportanceAnalyzer:
+"""
+importance_analysis.py
+───────────────────────
+Analyzes how important a piece of information is to remember.
 
-    def analyze(self, user_input):
+Produces an importance_score in the range [0.0, 1.0] using heuristic
+signals.  High-scoring inputs contain definitional, consequential, or
+knowledge-dense content.  Low-scoring inputs are transient, trivial, or
+opinion-free.
 
-        text = user_input.lower()
+Score interpretation:
+    0.0 – 0.39  : Not important enough to remember long-term
+    0.40 – 0.69 : Moderately important
+    0.70 – 1.0  : Highly important — strong candidate for memory storage
+"""
 
-        # Information that is usually important to remember
-        high_importance_keywords = [
+import os
+import re
+from typing import Optional
 
-            # Identity
-            "my name",
-            "i am",
-            "i'm",
-            "myself",
-            "name is",
-            "i like it",
-          
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+IMPORTANCE_THRESHOLD: float = float(os.getenv("IMPORTANCE_THRESHOLD", "0.4"))
 
-            # Preferences
-            "my favorite",
-            "favorite",
-            "i like",
-            "i love",
-            "i prefer",
-            "i dislike",
-            "i hate",
+# High-importance signal words — these suggest memorable, durable content
+_HIGH_IMPORTANCE_SIGNALS: list[str] = [
+    # definitional
+    "is a", "is an", "is the", "are a", "are the",
+    "means", "defined as", "definition", "refers to", "called",
+    "known as", "stands for", "oriented", "described as",
+    # factual permanence
+    "always", "never", "every", "all", "none", "must",
+    # consequential
+    "decided", "agreed", "conclusion", "therefore", "result",
+    "because", "due to", "leads to", "causes", "effect",
+    # learning / discovery
+    "learned", "discovered", "realized", "found out", "understood",
+    "figured out", "noticed", "remember",
+    # procedural sequence
+    "first", "step", "steps", "then", "next", "finally",
+    "procedure", "method", "process", "workflow", "approach",
+    # technical
+    "database", "algorithm", "api", "function", "class",
+    "module", "library", "framework", "architecture", "system",
+    "model", "server", "client", "protocol", "format", "schema",
+    "nosql", "sql", "query", "collection", "document", "storage",
+    "language", "programming", "interface", "structure",
+]
 
-            # Goals
-            "my goal",
-            "goal",
-            "my dream",
-            "dream",
-            "i want to become",
-            "i want to be",
-            "i plan to",
-            "plan",
-            "ambition",
+# Low-importance signal words — transient/trivial content
+_LOW_IMPORTANCE_SIGNALS: list[str] = [
+    "maybe", "perhaps", "i think", "not sure", "might", "could be",
+    "just asking", "wondering", "random", "whatever", "anyway",
+    "just", "kinda", "sorta",
+]
 
-            # Education
-            "i study",
-            "i am studying",
-            "studying",
-            "my college",
-            "my university",
-            "my course",
-            "my degree",
-            "my branch",
-            "my subject",
-            "i am prepearing for",
-            "i know about it"
+# Structural markers of importance
+_IMPORTANT_MARKERS = re.compile(
+    r"\b(important|critical|essential|key|note|remember|always|must|"
+    r"never|required|necessary|fundamental|core|main|primary|crucial)\b",
+    re.IGNORECASE,
+)
 
-            # Career
-            "my job",
-            "my work",
-            "my career",
-            "my profession",
-            "my company",
-            "my internship",
-            "my experience",
 
-            # Skills
-            "my skill",
-            "my skills",
-            "i know",
-            "i can",
-            "i learned",
-            "i have experience",
+def _score_signals(text: str) -> tuple[float, list[str]]:
+    """Return (bonus_score, list_of_reason_strings) based on signal matching."""
+    lower = text.lower()
+    score = 0.0
+    reasons: list[str] = []
 
-            # Projects
-            "my project",
-            "my projects",
-            "i am working on",
-            "working on",
-            "my research",
-            "my thesis",
+    # High-importance phrases
+    found_high = [s for s in _HIGH_IMPORTANCE_SIGNALS if s in lower]
+    if found_high:
+        bonus = min(0.45, len(found_high) * 0.09)
+        score += bonus
+        reasons.append(f"High-importance signals ({len(found_high)}): {', '.join(found_high[:3])} → +{bonus:.2f}.")
 
-            # Personal preferences
-            "my hobby",
-            "my hobbies",
-            "my interest",
-            "my interests",
-            "i prefer",
-            "i usually",
-            "my gole",
-            "my scope"
+    # Low-importance phrases — these reduce the score
+    found_low = [s for s in _LOW_IMPORTANCE_SIGNALS if s in lower]
+    if found_low:
+        penalty = min(0.30, len(found_low) * 0.08)
+        score -= penalty
+        reasons.append(f"Low-importance / uncertainty signals ({len(found_low)}) → -{penalty:.2f}.")
 
-            # Explicit memory requests
-            "remember",
-            "remember that",
-            "don't forget",
-            "do not forget",
-            "keep this in mind",
-            "save this",
-            "store this",
+    # Important-marker words (always, must, critical, etc.)
+    markers = _IMPORTANT_MARKERS.findall(text)
+    if markers:
+        bonus = min(0.20, len(markers) * 0.07)
+        score += bonus
+        reasons.append(f"Importance markers ({markers[:3]}) → +{bonus:.2f}.")
 
-            # Personal information
-            "my birthday",
-            "my location",
-            "my city",
-            "my country",
-            "my language",
-            "my email",
-            "my address"
-        ]
+    return score, reasons
 
-        # Information that is usually temporary
-        low_importance_keywords = [
 
-            "eating",
-            "eat",
-            "food",
-            "drinking",
-            "drink",
-            "having lunch",
-            "having dinner",
-            "breakfast",
-            "lunch",
-            "dinner",
+def analyze_importance(user_input: str) -> dict:
+    """
+    Assess how important *user_input* is to store as memory.
 
-            "today",
-            "tonight",
-            "this morning",
-            "this evening",
-            "right now",
-            "currently",
-            "at the moment",
+    Parameters
+    ----------
+    user_input : str
+        The raw text from the user.
 
-            "going to",
-            "going out",
-            "went to",
-            "came from",
+    Returns
+    -------
+    dict with keys:
+        importance_score : float  — 0.0 to 1.0
+        is_important     : bool   — True if score >= IMPORTANCE_THRESHOLD
+        reason           : str    — human-readable explanation
+    """
+    text = (user_input or "").strip()
 
-            "weather",
-            "raining",
-            "rain",
-            "sunny",
-            "cloudy",
-            "hot",
-            "cold",
-
-            "temporary",
-            "for now",
-            "just now",
-            "recently"
-        ]
-
-        score = 0.50
-
-        # High importance
-        for keyword in high_importance_keywords:
-
-            if keyword in text:
-
-                score += 0.35
-                break
-
-        # Temporary information
-        for keyword in low_importance_keywords:
-
-            if keyword in text:
-
-                score -= 0.35
-                break
-
-        score = max(0.0, min(score, 1.0))
-
-        # Importance level
-        if score >= 0.70:
-
-            level = "HIGH"
-
-        elif score >= 0.40:
-
-            level = "MEDIUM"
-
-        else:
-
-            level = "LOW"
-
+    # ── Guard ─────────────────────────────────────────────────────────────
+    if not text:
         return {
-
-            "importance_score": score,
-
-            "importance_level": level
-
+            "importance_score": 0.0,
+            "is_important": False,
+            "reason": "Empty input — nothing to analyze.",
         }
+
+    score = 0.0
+    reasons: list[str] = []
+
+    # ── Base score from word count ─────────────────────────────────────────
+    words = len(text.split())
+    base = min(0.20, words * 0.015)
+    score += base
+    reasons.append(f"Word count ({words}) base contribution: +{base:.2f}.")
+
+    # ── Signal-based scoring ───────────────────────────────────────────────
+    signal_score, signal_reasons = _score_signals(text)
+    score += signal_score
+    reasons.extend(signal_reasons)
+
+    # ── Specificity bonus: named entities / digits / proper nouns ─────────
+    has_named_entity = bool(re.search(r"\b[A-Z][a-zA-Z0-9_-]*\b", text))
+    has_number = bool(re.search(r"\b\d+[\d.,]*\b", text))
+    if has_named_entity:
+        score += 0.10
+        reasons.append("Contains proper noun / named entity (+0.10).")
+    if has_number:
+        score += 0.05
+        reasons.append("Contains numeric value (+0.05).")
+
+    # ── Clamp ─────────────────────────────────────────────────────────────
+    score = round(min(1.0, max(0.0, score)), 4)
+    is_important = score >= IMPORTANCE_THRESHOLD
+
+    return {
+        "importance_score": score,
+        "is_important": is_important,
+        "reason": " ".join(reasons) if reasons else "No strong importance signals found.",
+    }
